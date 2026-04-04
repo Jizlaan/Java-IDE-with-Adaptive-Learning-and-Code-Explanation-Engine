@@ -13,17 +13,14 @@ export default function Home() {
   const [isRunning, setIsRunning] = useState(false);
   const [activeBottomTab, setActiveBottomTab] = useState("Run");
 
-  const [learningInsights, setLearningInsights] = useState<{
-    explanation: string;
-    missingConcepts: string[];
-    resources: { title: string; url: string }[];
-  } | null>(null);
+  const [chatMessages, setChatMessages] = useState<{role: string, content: string}[]>([]);
+  const [chatInput, setChatInput] = useState("");
+  const [isChatting, setIsChatting] = useState(false);
 
   const handleRunCode = async () => {
     setIsRunning(true);
     setOutput("Compiling...");
     setActiveBottomTab("Run");
-    setLearningInsights(null);
 
     try {
       const response = await fetch("/api/run-java", {
@@ -38,7 +35,13 @@ export default function Home() {
         setOutput(data.output || "Process finished with exit code 0");
       } else {
         setOutput(`Process finished with exit code 1\n\n${data.error}\n\n${data.output}`);
-        fetchMLInsights(data.error || data.output, code);
+        
+        // Auto trigger chat
+        const prompt = `I just ran my code and got the following compiler/runtime error. Please explain ALL the specific errors to me individually:\n\nMy Code:\n\`\`\`java\n${code}\n\`\`\`\n\nError Output:\n\`\`\`\n${data.error || data.output}\n\`\`\``;
+        
+        const updatedMessages = [...chatMessages, { role: "user", content: prompt }];
+        setChatMessages(updatedMessages);
+        fetchChatResponse(updatedMessages);
       }
     } catch (err: any) {
       setOutput(`Failed to run code: ${err.message}`);
@@ -47,17 +50,24 @@ export default function Home() {
     }
   };
 
-  const fetchMLInsights = async (rawError: string, activeCode: string) => {
+  const fetchChatResponse = async (newMessages: {role: string, content: string}[]) => {
+    setIsChatting(true);
     try {
-      const response = await fetch("/api/explain-error", {
+      const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ error: rawError, code: activeCode }),
+        body: JSON.stringify({ messages: newMessages }),
       });
       const data = await response.json();
-      if (data.insights) setLearningInsights(data.insights);
+      if (data.success) {
+        setChatMessages([...newMessages, { role: "assistant", content: data.reply }]);
+      } else {
+        setChatMessages([...newMessages, { role: "assistant", content: `Error: ${data.error}` }]);
+      }
     } catch (err) {
-      console.error("Failed to fetch ML insights", err);
+      console.error("Failed to fetch chat response", err);
+    } finally {
+      setIsChatting(false);
     }
   };
 
@@ -207,78 +217,75 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Right Sidebar: AI/Dashboard (IntelliJ Tool Window Style) */}
-        <div className="w-[340px] flex flex-col bg-[#141414] shrink-0 border-l border-[#333333]">
+        {/* Right Sidebar: AI Chatbot (IntelliJ Tool Window Style) */}
+        <div className="w-[360px] flex flex-col bg-[#141414] shrink-0 border-l border-[#333333]">
           <div className="h-10 flex items-center px-4 bg-[#0F0F0F] border-b border-[#333333] shrink-0 shadow-sm">
             <span className="text-[13px] font-medium text-[#E0E0E0] flex items-center">
               <Brain className="w-4 h-4 mr-2 text-[#c678dd] drop-shadow-sm" />
-              Adaptive Learning
+              AI Chatbot
             </span>
           </div>
 
-          <div className="flex-1 overflow-auto p-5 scrollbar-thin scrollbar-thumb-[#404040] text-[13px] bg-[#1A1A1A]">
-            {!learningInsights ? (
+          <div className="flex-1 overflow-auto p-4 scrollbar-thin scrollbar-thumb-[#404040] text-[13px] bg-[#1A1A1A] space-y-4">
+            {chatMessages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-[#777777] space-y-4">
                 <Brain className="w-12 h-12 opacity-20" />
                 <p className="text-center px-4 leading-relaxed font-medium">
-                  Run your code. If you make a mistake, I will assist you with it.
+                  Run your code or say hi. I will assist you with any errors!
                 </p>
               </div>
             ) : (
-              <div className="space-y-5 animate-in fade-in duration-300">
-
-                {/* Error Breakdown */}
-                <div className="border border-[#e06c75]/50 bg-[#e06c75]/10 rounded-md p-3.5 hover:bg-[#e06c75]/15 transition-all shadow-sm">
-                  <h3 className="text-[#e06c75] font-semibold mb-1.5 flex items-center text-[11px] uppercase tracking-wider drop-shadow-sm">
-                    Error Breakdown
-                  </h3>
-                  <p className="text-[#E0E0E0] leading-relaxed">
-                    {learningInsights.explanation}
-                  </p>
+              chatMessages.map((msg, idx) => (
+                <div key={idx} className={`p-3 rounded-md shadow-sm transition-all ${msg.role === 'user' ? 'bg-[#2A2A2A] border border-[#404040] ml-6' : 'bg-[#141414] border border-[#c678dd]/30 mr-6'}`}>
+                  <h4 className={`text-[11px] uppercase tracking-wider mb-1.5 font-semibold ${msg.role === 'user' ? 'text-[#A0A0A0]' : 'text-[#c678dd]'}`}>
+                    {msg.role === 'user' ? 'You' : 'AI Assistant'}
+                  </h4>
+                  <div className="text-[#E0E0E0] leading-relaxed whitespace-pre-wrap break-words font-sans">
+                    {msg.content}
+                  </div>
                 </div>
-
-                {/* Missing Concepts */}
-                {learningInsights.missingConcepts && learningInsights.missingConcepts.length > 0 && (
-                  <div className="border border-[#4DAAFB]/50 bg-[#4DAAFB]/10 rounded-md p-3.5 hover:bg-[#4DAAFB]/15 transition-all shadow-sm">
-                    <h3 className="text-[#4DAAFB] font-semibold mb-2.5 flex items-center text-[11px] uppercase tracking-wider drop-shadow-sm">
-                      Concepts
-                    </h3>
-                    <div className="flex flex-wrap gap-2">
-                      {learningInsights.missingConcepts.map((concept, idx) => (
-                        <span key={idx} className="bg-[#141414] text-[#E0E0E0] px-2.5 py-1 rounded-md text-[11px] font-medium border border-[#404040] shadow-sm">
-                          {concept}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Study Resources */}
-                {learningInsights.resources && learningInsights.resources.length > 0 && (
-                  <div className="border border-[#c678dd]/50 bg-[#c678dd]/10 rounded-md p-3.5 hover:bg-[#c678dd]/15 transition-all shadow-sm">
-                    <h3 className="text-[#c678dd] font-semibold mb-2.5 flex items-center text-[11px] uppercase tracking-wider drop-shadow-sm">
-                      <BookOpen className="w-3.5 h-3.5 mr-1.5" /> Recommended Reading
-                    </h3>
-                    <ul className="space-y-2.5">
-                      {learningInsights.resources.map((res, idx) => (
-                        <li key={idx}>
-                          <a
-                            href={res.url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="block p-2.5 rounded-md bg-[#141414] border border-[#333333] hover:border-[#c678dd]/60 hover:bg-[#1C1C1C] transition-all shadow-sm group"
-                          >
-                            <span className="text-[#E0E0E0] font-medium block truncate text-[12px] group-hover:text-white">
-                              {res.title}
-                            </span>
-                          </a>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
+              ))
             )}
+            {isChatting && (
+               <div className="p-3 rounded-md bg-[#141414] border border-[#c678dd]/30 mr-6 shadow-sm animate-pulse">
+                  <div className="text-[#A0A0A0] flex items-center">
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" /> Thinking...
+                  </div>
+               </div>
+            )}
+          </div>
+
+          {/* Chat Input */}
+          <div className="p-3 bg-[#0F0F0F] border-t border-[#333333]">
+            <form 
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!chatInput.trim() || isChatting) return;
+                const newMsg = { role: "user", content: chatInput };
+                const updatedMessages = [...chatMessages, newMsg];
+                setChatMessages(updatedMessages);
+                setChatInput("");
+                fetchChatResponse(updatedMessages);
+              }}
+              className="flex items-center space-x-2"
+            >
+              <input 
+                type="text" 
+                value={chatInput}
+                onChange={(e) => setChatInput(e.target.value)}
+                placeholder="Ask about your code..."
+                className="flex-1 bg-[#1A1A1A] text-[13px] text-[#E0E0E0] px-3 py-2 border border-[#404040] rounded-[4px] focus:outline-none focus:border-[#4DAAFB] transition-colors placeholder-[#666666]"
+              />
+              <button 
+                type="submit"
+                disabled={isChatting || !chatInput.trim()}
+                className="bg-[#4DAAFB]/10 hover:bg-[#4DAAFB]/20 text-[#4DAAFB] p-2 rounded-[4px] transition-colors disabled:opacity-50 flex items-center justify-center border border-transparent hover:border-[#4DAAFB]/30"
+              >
+                <div className="w-[18px] h-[18px] flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                </div>
+              </button>
+            </form>
           </div>
         </div>
       </div>

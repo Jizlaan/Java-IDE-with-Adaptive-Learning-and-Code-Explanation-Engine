@@ -7,61 +7,62 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, message: "No error provided" });
     }
 
-    // ==========================================
-    // INTEGRATION POINT FOR YOUR LOCAL ML MODEL
-    // ==========================================
-    // To connect your own ML model, you could do something like:
-    // const mlResponse = await fetch("http://localhost:5000/predict", {
-    //   method: "POST",
-    //   headers: { "Content-Type": "application/json" },
-    //   body: JSON.stringify({ error, code })
-    // });
-    // const insights = await mlResponse.json();
-    // return NextResponse.json({ insights });
-    // ==========================================
-
-    // For now, we return a smart-looking mock response to demonstrate the UI:
-    let explanation = "Your code has a syntax or compilation error.";
-    let missingConcepts = ["Syntax Mechanics", "Basic Java Structure"];
-    let resources = [
-      { title: "Java Programming Basics", url: "https://docs.oracle.com/javase/tutorial/java/nutsandbolts/" }
-    ];
-
-    if (error.includes(";") || error.includes("expected")) {
-      explanation = "You missed a semicolon ';' at the end of a statement. In Java, every statement must end with a semicolon to tell the compiler where the instruction ends.";
-      missingConcepts = ["Java Syntax Rules", "Statement Termination"];
-      resources = [
-        { title: "Statements and Blocks in Java", url: "https://docs.oracle.com/javase/tutorial/java/nutsandbolts/expressions.html" }
-      ];
-    } else if (error.includes("cannot find symbol") || error.includes("undefined") || error.includes("not find symbol")) {
-      explanation = "You are trying to use a variable or method that hasn't been declared, or you might have misspelled it. The Java compiler doesn't recognize the name you provided.";
-      missingConcepts = ["Variable Declaration", "Scope"];
-      resources = [
-        { title: "Variables in Java", url: "https://docs.oracle.com/javase/tutorial/java/nutsandbolts/variables.html" }
-      ];
-    } else if (error.includes("ArrayIndexOutOfBoundsException")) {
-      explanation = "You tried to access an item in an array using an index that is either negative or greater than or equal to the size of the array. Remember that Java array indices start at 0.";
-      missingConcepts = ["Arrays", "Zero-based Indexing"];
-      resources = [
-        { title: "Arrays Tutorial", url: "https://docs.oracle.com/javase/tutorial/java/nutsandbolts/arrays.html" }
-      ];
-    } else {
-        explanation = `The compiler threw an error: ${error.substring(0, 100)}... Once your ML model is integrated, it will analyze this raw output and translate it to plain English here.`;
+    const groqApiKey = process.env.GROQ_API_KEY;
+    if (!groqApiKey) {
+      return NextResponse.json({
+        success: false,
+        error: "GROQ_API_KEY is not configured on the server."
+      });
     }
 
-    // Simulated ML delay
-    await new Promise(resolve => setTimeout(resolve, 800));
+    const systemPrompt = `You are a helpful coding assistant integrated into a Java IDE.
+Your task is to analyze Java code and its compiler or runtime error, and explain it clearly to a beginner.
+You MUST respond ONLY with a JSON object in the exact format shown below, with no surrounding markdown or explanation outside the JSON:
+
+{
+  "explanation": "A plain english, friendly explanation of what went wrong and how to fix it.",
+  "missingConcepts": ["Short Concept 1", "Short Concept 2"],
+  "resources": [
+    {"title": "Title of Java Article", "url": "https://docs.oracle.com/javase/tutorial/..."}
+  ]
+}`;
+
+    const userPrompt = `Code:\n\`\`\`java\n${code}\n\`\`\`\n\nError:\n\`\`\`\n${error}\n\`\`\``;
+
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${groqApiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "llama-3.1-8b-instant", // Fast and reliable Open Source model for JSON structure
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0.1
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error("Groq API Error:", errText);
+      throw new Error(`Failed to fetch explanation from Groq API: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    const insightsStr = data.choices[0].message.content;
+    const insights = JSON.parse(insightsStr);
 
     return NextResponse.json({
       success: true,
-      insights: {
-        explanation,
-        missingConcepts,
-        resources
-      }
+      insights
     });
 
   } catch (error: any) {
+    console.error("Explain error route exception:", error);
     return NextResponse.json({ success: false, error: error.message || "Internal server error" });
   }
 }
