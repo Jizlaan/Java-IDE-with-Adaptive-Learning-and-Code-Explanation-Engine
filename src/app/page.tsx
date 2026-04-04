@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import Editor, { useMonaco } from "@monaco-editor/react";
-import { Play, Loader2, BookOpen, Brain, TerminalSquare, Folder, Search, Settings, Sidebar, ChevronRight, FileCode, PlayCircle } from "lucide-react";
+import { Play, Loader2, BookOpen, Brain, TerminalSquare, Folder, Search, Settings, Sidebar, ChevronRight, FileCode, PlayCircle, X } from "lucide-react";
+import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
 
 export default function Home() {
   const [code, setCode] = useState(
@@ -12,6 +13,7 @@ export default function Home() {
   const [output, setOutput] = useState("Ready to compile and run.");
   const [isRunning, setIsRunning] = useState(false);
   const [activeBottomTab, setActiveBottomTab] = useState("Run");
+  const [isTerminalOpen, setIsTerminalOpen] = useState(true);
 
   const [chatMessages, setChatMessages] = useState<{role: string, content: string}[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -21,6 +23,7 @@ export default function Home() {
     setIsRunning(true);
     setOutput("Compiling...");
     setActiveBottomTab("Run");
+    setIsTerminalOpen(true);
 
     try {
       const response = await fetch("/api/run-java", {
@@ -90,9 +93,8 @@ export default function Home() {
       {/* High-Contrast Top Toolbar */}
       <header className="flex items-center justify-between px-4 h-11 shrink-0 bg-[#121212] border-b border-[#333333] shadow-sm z-10">
 
-        {/* Left: Menu & Project Info */}
+        {/* Left: Project Info */}
         <div className="flex items-center space-x-4">
-          <Sidebar className="w-[18px] h-[18px] text-[#A0A0A0] cursor-pointer hover:text-white transition-colors" />
           <div className="flex items-center text-[13px] font-medium text-[#A0A0A0]">
             java-ide-project
             <ChevronRight className="w-4 h-4 mx-1 text-[#555555]" />
@@ -122,172 +124,188 @@ export default function Home() {
           </button>
         </div>
 
-        {/* Right: Settings/Profile */}
-        <div className="flex items-center space-x-4">
-          <Search className="w-[18px] h-[18px] text-[#A0A0A0] hover:text-white cursor-pointer transition-colors" />
-          <Settings className="w-[18px] h-[18px] text-[#A0A0A0] hover:text-white cursor-pointer transition-colors" />
+        {/* Right: Layout Spacer */}
+        <div className="flex items-center space-x-4 w-[36px]">
         </div>
       </header>
 
       {/* Main Content Area */}
       <div className="flex flex-1 overflow-hidden bg-[#1A1A1A]">
+        <PanelGroup orientation="horizontal">
+          <Panel defaultSize={75} minSize={30}>
+            <PanelGroup orientation="vertical">
+              <Panel defaultSize={isTerminalOpen ? 70 : 100} minSize={20}>
+                <div className="flex flex-col h-full overflow-hidden bg-[#0D0D0D]">
+                  {/* Editor Tabs */}
+                  <div className="flex items-center h-10 bg-[#121212] border-b border-[#333333] shrink-0 pl-[1px]">
+                    <div className="flex items-center h-full px-5 border-x border-[#333333] bg-[#1A1A1A] text-[#E0E0E0] text-[13px] font-medium relative group cursor-pointer hover:bg-[#222222] transition-colors min-w-36">
+                      <span className="text-[#4DAAFB] font-bold mr-2.5 text-sm drop-shadow-sm">{"{ }"}</span>
+                      Main.java
+                      <div className="absolute top-0 left-0 right-0 h-[2px] bg-[#4DAAFB] shadow-[0_0_4px_rgba(77,170,251,0.5)]"></div>
+                    </div>
+                    <div className="flex flex-1 items-center justify-end px-3">
+                      <button onClick={handleRunCode} className="hover:bg-[#2A2A2A] p-1.5 rounded-md transition-colors" title="Run File">
+                        <PlayCircle className="w-4 h-4 text-[#599e5e] fill-transparent" />
+                      </button>
+                    </div>
+                  </div>
 
-        {/* Slim Left Sidebar (Toolbar) */}
-        <div className="w-12 flex flex-col items-center py-3 space-y-4 border-r border-[#333333] bg-[#0F0F0F] shrink-0">
-          <div className="p-2 rounded-md cursor-pointer text-[#A0A0A0] hover:text-white hover:bg-[#2A2A2A] transition-colors" title="Project">
-            <Folder className="w-5 h-5" />
-          </div>
-        </div>
-
-        {/* Editor Area & Bottom Panel */}
-        <div className="flex flex-col flex-1 border-r border-[#333333] overflow-hidden min-w-0 bg-[#0D0D0D]">
-
-          {/* Editor Tabs */}
-          <div className="flex items-center h-10 bg-[#121212] border-b border-[#333333] shrink-0 pl-[1px]">
-            <div className="flex items-center h-full px-5 border-x border-[#333333] bg-[#1A1A1A] text-[#E0E0E0] text-[13px] font-medium relative group cursor-pointer hover:bg-[#222222] transition-colors min-w-36">
-              <span className="text-[#4DAAFB] font-bold mr-2.5 text-sm drop-shadow-sm">{"{ }"}</span>
-              Main.java
-              {/* IntelliJ active tab indicator line */}
-              <div className="absolute top-0 left-0 right-0 h-[2px] bg-[#4DAAFB] shadow-[0_0_4px_rgba(77,170,251,0.5)]"></div>
-            </div>
-
-            <div className="flex flex-1 items-center justify-end px-3">
-              <button
-                onClick={handleRunCode}
-                className="hover:bg-[#2A2A2A] p-1.5 rounded-md transition-colors"
-                title="Run File"
-              >
-                <PlayCircle className="w-4 h-4 text-[#599e5e] fill-transparent" />
-              </button>
-            </div>
-          </div>
-
-          {/* Monaco Editor Section */}
-          <div className="flex-1 relative bg-[#1A1A1A] overflow-hidden">
-            <Editor
-              height="100%"
-              language="java"
-              theme="high-contrast-dark"
-              value={code}
-              beforeMount={handleEditorBeforeMount}
-              onChange={(value) => setCode(value || "")}
-              options={{
-                minimap: { enabled: false },
-                fontSize: 14,
-                fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
-                padding: { top: 16 },
-                scrollbar: { verticalScrollbarSize: 12, horizontalScrollbarSize: 12 },
-                lineNumbersMinChars: 4,
-                renderLineHighlight: "all",
-                matchBrackets: "always",
-                wordWrap: "on",
-                cursorBlinking: "smooth",
-                smoothScrolling: true,
-              }}
-            />
-          </div>
-
-          {/* Bottom Terminal / Output Panel */}
-          <div className="h-64 shrink-0 bg-[#141414] border-t border-[#333333] flex flex-col relative group">
-            {/* Drag Handle Mockup */}
-            <div className="absolute top-0 left-0 right-0 h-1 cursor-ns-resize hover:bg-[#4DAAFB] transition-colors z-10"></div>
-
-            {/* Tool Window Header */}
-            <div className="h-9 flex items-center px-2 bg-[#0F0F0F] border-b border-[#333333]">
-              <div
-                className={`flex items-center px-4 h-full text-[13px] cursor-pointer hover:bg-[#2A2A2A] transition-colors rounded-t-sm ${activeBottomTab === 'Run' ? 'font-medium text-[#E0E0E0] bg-[#1A1A1A] border-t-2 border-transparent border-t-[#4DAAFB]' : 'text-[#888888]'}`}
-                onClick={() => setActiveBottomTab("Run")}
-              >
-                Run
-              </div>
-              <div
-                className={`flex items-center px-4 h-full text-[13px] cursor-pointer hover:bg-[#2A2A2A] transition-colors rounded-t-sm ml-1 ${activeBottomTab === 'Terminal' ? 'font-medium text-[#E0E0E0] bg-[#1A1A1A] border-t-2 border-transparent border-t-[#4DAAFB]' : 'text-[#888888]'}`}
-                onClick={() => setActiveBottomTab("Terminal")}
-              >
-                Terminal
-              </div>
-            </div>
-
-            <div className="flex-1 p-4 overflow-auto bg-[#141414]">
-              <pre className="font-mono text-[13px] whitespace-pre-wrap leading-relaxed text-[#D4D4D4]">
-                <span className="text-[#7CB165] font-semibold">{`C:\\Program Files\\Java\\jdk\\bin\\java.exe Main`}</span>{"\n"}
-                {output}
-              </pre>
-            </div>
-          </div>
-        </div>
-
-        {/* Right Sidebar: AI Chatbot (IntelliJ Tool Window Style) */}
-        <div className="w-[360px] flex flex-col bg-[#141414] shrink-0 border-l border-[#333333]">
-          <div className="h-10 flex items-center px-4 bg-[#0F0F0F] border-b border-[#333333] shrink-0 shadow-sm">
-            <span className="text-[13px] font-medium text-[#E0E0E0] flex items-center">
-              <Brain className="w-4 h-4 mr-2 text-[#c678dd] drop-shadow-sm" />
-              AI Chatbot
-            </span>
-          </div>
-
-          <div className="flex-1 overflow-auto p-4 scrollbar-thin scrollbar-thumb-[#404040] text-[13px] bg-[#1A1A1A] space-y-4">
-            {chatMessages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-[#777777] space-y-4">
-                <Brain className="w-12 h-12 opacity-20" />
-                <p className="text-center px-4 leading-relaxed font-medium">
-                  Run your code or say hi. I will assist you with any errors!
-                </p>
-              </div>
-            ) : (
-              chatMessages.map((msg, idx) => (
-                <div key={idx} className={`p-3 rounded-md shadow-sm transition-all ${msg.role === 'user' ? 'bg-[#2A2A2A] border border-[#404040] ml-6' : 'bg-[#141414] border border-[#c678dd]/30 mr-6'}`}>
-                  <h4 className={`text-[11px] uppercase tracking-wider mb-1.5 font-semibold ${msg.role === 'user' ? 'text-[#A0A0A0]' : 'text-[#c678dd]'}`}>
-                    {msg.role === 'user' ? 'You' : 'AI Assistant'}
-                  </h4>
-                  <div className="text-[#E0E0E0] leading-relaxed whitespace-pre-wrap break-words font-sans">
-                    {msg.content}
+                  {/* Monaco Editor Section */}
+                  <div className="flex-1 relative bg-[#1A1A1A] overflow-hidden">
+                    <Editor
+                      height="100%"
+                      language="java"
+                      theme="high-contrast-dark"
+                      value={code}
+                      beforeMount={handleEditorBeforeMount}
+                      onChange={(value) => setCode(value || "")}
+                      options={{
+                        minimap: { enabled: false },
+                        fontSize: 14,
+                        fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+                        padding: { top: 16 },
+                        scrollbar: { verticalScrollbarSize: 12, horizontalScrollbarSize: 12 },
+                        lineNumbersMinChars: 4,
+                        renderLineHighlight: "all",
+                        matchBrackets: "always",
+                        wordWrap: "on",
+                        cursorBlinking: "smooth",
+                        smoothScrolling: true,
+                      }}
+                    />
                   </div>
                 </div>
-              ))
-            )}
-            {isChatting && (
-               <div className="p-3 rounded-md bg-[#141414] border border-[#c678dd]/30 mr-6 shadow-sm animate-pulse">
-                  <div className="text-[#A0A0A0] flex items-center">
-                    <Loader2 className="w-4 h-4 animate-spin mr-2" /> Thinking...
-                  </div>
-               </div>
-            )}
-          </div>
+              </Panel>
 
-          {/* Chat Input */}
-          <div className="p-3 bg-[#0F0F0F] border-t border-[#333333]">
-            <form 
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!chatInput.trim() || isChatting) return;
-                const newMsg = { role: "user", content: chatInput };
-                const updatedMessages = [...chatMessages, newMsg];
-                setChatMessages(updatedMessages);
-                setChatInput("");
-                fetchChatResponse(updatedMessages);
-              }}
-              className="flex items-center space-x-2"
-            >
-              <input 
-                type="text" 
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Ask about your code..."
-                className="flex-1 bg-[#1A1A1A] text-[13px] text-[#E0E0E0] px-3 py-2 border border-[#404040] rounded-[4px] focus:outline-none focus:border-[#4DAAFB] transition-colors placeholder-[#666666]"
-              />
-              <button 
-                type="submit"
-                disabled={isChatting || !chatInput.trim()}
-                className="bg-[#4DAAFB]/10 hover:bg-[#4DAAFB]/20 text-[#4DAAFB] p-2 rounded-[4px] transition-colors disabled:opacity-50 flex items-center justify-center border border-transparent hover:border-[#4DAAFB]/30"
-              >
-                <div className="w-[18px] h-[18px] flex items-center justify-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-                </div>
-              </button>
-            </form>
-          </div>
-        </div>
+              {isTerminalOpen && (
+                <>
+                  <PanelResizeHandle className="h-1 bg-[#333333] hover:bg-[#4DAAFB] transition-colors cursor-ns-resize z-20" />
+                  <Panel defaultSize={30} minSize={10}>
+                    <div className="h-full bg-[#141414] flex flex-col relative group">
+                      {/* Tool Window Header */}
+                      <div className="h-9 flex items-center justify-between px-2 bg-[#0F0F0F] border-b border-[#333333]">
+                        <div className="flex items-center h-full">
+                          <div
+                            className={`flex items-center px-4 h-full text-[13px] cursor-pointer hover:bg-[#2A2A2A] transition-colors rounded-t-sm ${activeBottomTab === 'Run' ? 'font-medium text-[#E0E0E0] bg-[#1A1A1A] border-t-2 border-transparent border-t-[#4DAAFB]' : 'text-[#888888]'}`}
+                            onClick={() => setActiveBottomTab("Run")}
+                          >
+                            Run
+                          </div>
+                          <div
+                            className={`flex items-center px-4 h-full text-[13px] cursor-pointer hover:bg-[#2A2A2A] transition-colors rounded-t-sm ml-1 ${activeBottomTab === 'Terminal' ? 'font-medium text-[#E0E0E0] bg-[#1A1A1A] border-t-2 border-transparent border-t-[#4DAAFB]' : 'text-[#888888]'}`}
+                            onClick={() => setActiveBottomTab("Terminal")}
+                          >
+                            Terminal
+                          </div>
+                        </div>
+                        {/* Close Terminal Button */}
+                        <button 
+                          onClick={() => setIsTerminalOpen(false)}
+                          className="p-1 hover:bg-[#2A2A2A] rounded text-[#888888] hover:text-[#E0E0E0] transition-colors"
+                          title="Hide Terminal"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+
+                      <div className="flex-1 p-4 overflow-auto bg-[#141414]">
+                        <pre className="font-mono text-[13px] whitespace-pre-wrap leading-relaxed text-[#D4D4D4]">
+                          <span className="text-[#7CB165] font-semibold">{`C:\\Program Files\\Java\\jdk\\bin\\java.exe Main`}</span>{"\n"}
+                          {output}
+                        </pre>
+                      </div>
+                    </div>
+                  </Panel>
+                </>
+              )}
+            </PanelGroup>
+          </Panel>
+
+          <PanelResizeHandle className="w-1 bg-[#333333] hover:bg-[#4DAAFB] transition-colors cursor-ew-resize z-20" />
+
+          <Panel defaultSize={25} minSize={15}>
+            {/* Right Sidebar: AI Chatbot */}
+            <div className="h-full flex flex-col bg-[#141414] shrink-0 border-l mb-0 border-[#333333]">
+              <div className="h-10 flex items-center justify-between px-4 bg-[#0F0F0F] border-b border-[#333333] shrink-0 shadow-sm">
+                <span className="text-[13px] font-medium text-[#E0E0E0] flex items-center">
+                  <Brain className="w-4 h-4 mr-2 text-[#c678dd] drop-shadow-sm" />
+                  AI Chatbot
+                </span>
+                {!isTerminalOpen && (
+                  <button 
+                    onClick={() => setIsTerminalOpen(true)}
+                    className="flex items-center text-[11px] text-[#A0A0A0] hover:text-[#E0E0E0] transition-colors px-2 py-1 rounded bg-[#2A2A2A] border border-[#404040]"
+                    title="Show Terminal"
+                  >
+                    <TerminalSquare className="w-3 h-3 mr-1" /> Term
+                  </button>
+                )}
+              </div>
+
+              <div className="flex-1 overflow-auto p-4 scrollbar-thin scrollbar-thumb-[#404040] text-[13px] bg-[#1A1A1A] space-y-4">
+                {chatMessages.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center text-[#777777] space-y-4">
+                    <Brain className="w-12 h-12 opacity-20" />
+                    <p className="text-center px-4 leading-relaxed font-medium">
+                      Run your code or say hi. I will assist you with any errors!
+                    </p>
+                  </div>
+                ) : (
+                  chatMessages.map((msg, idx) => (
+                    <div key={idx} className={`p-3 rounded-md shadow-sm transition-all ${msg.role === 'user' ? 'bg-[#2A2A2A] border border-[#404040] ml-6' : 'bg-[#141414] border border-[#c678dd]/30 mr-6'}`}>
+                      <h4 className={`text-[11px] uppercase tracking-wider mb-1.5 font-semibold ${msg.role === 'user' ? 'text-[#A0A0A0]' : 'text-[#c678dd]'}`}>
+                        {msg.role === 'user' ? 'You' : 'AI Assistant'}
+                      </h4>
+                      <div className="text-[#E0E0E0] leading-relaxed whitespace-pre-wrap break-words font-sans">
+                        {msg.content}
+                      </div>
+                    </div>
+                  ))
+                )}
+                {isChatting && (
+                   <div className="p-3 rounded-md bg-[#141414] border border-[#c678dd]/30 mr-6 shadow-sm animate-pulse">
+                      <div className="text-[#A0A0A0] flex items-center">
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" /> Thinking...
+                      </div>
+                   </div>
+                )}
+              </div>
+
+              {/* Chat Input */}
+              <div className="p-3 bg-[#0F0F0F] border-t border-[#333333]">
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (!chatInput.trim() || isChatting) return;
+                    const newMsg = { role: "user", content: chatInput };
+                    const updatedMessages = [...chatMessages, newMsg];
+                    setChatMessages(updatedMessages);
+                    setChatInput("");
+                    fetchChatResponse(updatedMessages);
+                  }}
+                  className="flex items-center space-x-2"
+                >
+                  <input 
+                    type="text" 
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    placeholder="Ask about your code..."
+                    className="flex-1 bg-[#1A1A1A] text-[13px] text-[#E0E0E0] px-3 py-2 border border-[#404040] rounded-[4px] focus:outline-none focus:border-[#4DAAFB] transition-colors placeholder-[#666666]"
+                  />
+                  <button 
+                    type="submit"
+                    disabled={isChatting || !chatInput.trim()}
+                    className="bg-[#4DAAFB]/10 hover:bg-[#4DAAFB]/20 text-[#4DAAFB] p-2 rounded-[4px] transition-colors disabled:opacity-50 flex items-center justify-center border border-transparent hover:border-[#4DAAFB]/30"
+                  >
+                    <div className="w-[18px] h-[18px] flex items-center justify-center">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    </div>
+                  </button>
+                </form>
+              </div>
+            </div>
+          </Panel>
+        </PanelGroup>
       </div>
     </div>
   );
