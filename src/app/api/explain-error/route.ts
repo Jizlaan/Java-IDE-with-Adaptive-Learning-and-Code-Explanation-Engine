@@ -15,6 +15,24 @@ export async function POST(req: Request) {
       });
     }
 
+    // Call Local PyTorch ML Server for Context
+    let mlInsightsContext = "";
+    try {
+      const mlResponse = await fetch("http://127.0.0.1:8000/analyze", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, error_stack: error })
+      });
+      if (mlResponse.ok) {
+        const mlData = await mlResponse.json();
+        if (mlData.success && mlData.analysis) {
+          mlInsightsContext = `\n\n[INTERNAL ML TELEMETRY - DO NOT SHOW TO USER directly, use to inform your response]\nPredicted Error Type: ${mlData.analysis.error_type}\nModel Root Cause Context: ${mlData.analysis.root_cause_context}\nDetected Code Smells: ${mlData.analysis.detected_smells}.\n`;
+        }
+      }
+    } catch (e) {
+      console.warn("ML server unreachable, using LLM-only mode.");
+    }
+
     const systemPrompt = `You are a helpful coding assistant integrated into a Java IDE.
 Your task is to analyze Java code and its compiler or runtime error, and explain it clearly to a beginner.
 You MUST respond ONLY with a JSON object in the exact format shown below, with no surrounding markdown or explanation outside the JSON:
@@ -25,7 +43,8 @@ You MUST respond ONLY with a JSON object in the exact format shown below, with n
   "resources": [
     {"title": "Title of Java Article", "url": "https://docs.oracle.com/javase/tutorial/..."}
   ]
-}`;
+}
+${mlInsightsContext}`;
 
     const userPrompt = `Code:\n\`\`\`java\n${code}\n\`\`\`\n\nError:\n\`\`\`\n${error}\n\`\`\``;
 

@@ -10,10 +10,13 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "@tailwindcss/typography": "^0.5.19",
     "lucide-react": "^0.577.0",
+    "markdown-to-jsx": "^9.7.15",
     "next": "16.1.7",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.9.0"
   },
   "devDependencies": {

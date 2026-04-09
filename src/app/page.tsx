@@ -4,6 +4,7 @@ import { useState } from "react";
 import Editor, { useMonaco } from "@monaco-editor/react";
 import { Play, Loader2, BookOpen, Brain, TerminalSquare, Folder, Search, Settings, Sidebar, ChevronRight, FileCode, PlayCircle, X } from "lucide-react";
 import { Panel, Group as PanelGroup, Separator as PanelResizeHandle } from "react-resizable-panels";
+import ReactMarkdown from "react-markdown";
 
 export default function Home() {
   const [code, setCode] = useState(
@@ -15,7 +16,7 @@ export default function Home() {
   const [activeBottomTab, setActiveBottomTab] = useState("Run");
   const [isTerminalOpen, setIsTerminalOpen] = useState(true);
 
-  const [chatMessages, setChatMessages] = useState<{role: string, content: string}[]>([]);
+  const [chatMessages, setChatMessages] = useState<{role: string, content: string, hidden?: boolean}[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isChatting, setIsChatting] = useState(false);
 
@@ -39,12 +40,18 @@ export default function Home() {
       } else {
         setOutput(`Process finished with exit code 1\n\n${data.error}\n\n${data.output}`);
         
-        // Auto trigger chat
-        const prompt = `I just ran my code and got the following compiler/runtime error. Please explain ALL the specific errors to me individually:\n\nMy Code:\n\`\`\`java\n${code}\n\`\`\`\n\nError Output:\n\`\`\`\n${data.error || data.output}\n\`\`\``;
+        // Auto trigger chat: explicitly truncate code to max 2500 chars to avoid payload explosion
+        const safeCode = code.length > 2500 ? code.substring(0, 2500) + "\n...[CODE TRUNCATED]..." : code;
+        const errDump = data.error || data.output || "";
+        const safeErr = errDump.length > 2500 ? errDump.substring(errDump.length - 2500) : errDump; // keep tail end of logs
         
-        const updatedMessages = [...chatMessages, { role: "user", content: prompt }];
+        const prompt = `I just ran my code and got the following compiler/runtime error. Please explain ALL the specific errors to me individually:\n\nMy Code:\n\`\`\`java\n${safeCode}\n\`\`\`\n\nError Output:\n\`\`\`\n${safeErr}\n\`\`\``;
+        
+        // Strip out old hidden system traces from previous runs to save context size!
+        const cleanHistory = chatMessages.filter(msg => !msg.hidden);
+        const updatedMessages = [...cleanHistory, { role: "user", content: prompt, hidden: true }];
         setChatMessages(updatedMessages);
-        fetchChatResponse(updatedMessages);
+        fetchChatResponse(updatedMessages, code, data.error || data.output);
       }
     } catch (err: any) {
       setOutput(`Failed to run code: ${err.message}`);
@@ -53,13 +60,19 @@ export default function Home() {
     }
   };
 
-  const fetchChatResponse = async (newMessages: {role: string, content: string}[]) => {
+  const fetchChatResponse = async (newMessages: {role: string, content: string, hidden?: boolean}[], codeContext?: string, errorContext?: string) => {
     setIsChatting(true);
     try {
+      const payload: any = { messages: newMessages };
+      if (codeContext && errorContext) {
+        payload.code = codeContext;
+        payload.error_stack = errorContext;
+      }
+      
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify(payload),
       });
       const data = await response.json();
       if (data.success) {
@@ -229,7 +242,7 @@ export default function Home() {
               <div className="h-10 flex items-center justify-between px-4 bg-[#0F0F0F] border-b border-[#333333] shrink-0 shadow-sm">
                 <span className="text-[13px] font-medium text-[#E0E0E0] flex items-center">
                   <Brain className="w-4 h-4 mr-2 text-[#c678dd] drop-shadow-sm" />
-                  AI Chatbot
+                  CodeSense
                 </span>
                 {!isTerminalOpen && (
                   <button 
@@ -243,7 +256,7 @@ export default function Home() {
               </div>
 
               <div className="flex-1 overflow-auto p-4 scrollbar-thin scrollbar-thumb-[#404040] text-[13px] bg-[#1A1A1A] space-y-4">
-                {chatMessages.length === 0 ? (
+                {chatMessages.filter(msg => !msg.hidden).length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center text-[#777777] space-y-4">
                     <Brain className="w-12 h-12 opacity-20" />
                     <p className="text-center px-4 leading-relaxed font-medium">
@@ -251,13 +264,31 @@ export default function Home() {
                     </p>
                   </div>
                 ) : (
-                  chatMessages.map((msg, idx) => (
-                    <div key={idx} className={`p-3 rounded-md shadow-sm transition-all ${msg.role === 'user' ? 'bg-[#2A2A2A] border border-[#404040] ml-6' : 'bg-[#141414] border border-[#c678dd]/30 mr-6'}`}>
-                      <h4 className={`text-[11px] uppercase tracking-wider mb-1.5 font-semibold ${msg.role === 'user' ? 'text-[#A0A0A0]' : 'text-[#c678dd]'}`}>
-                        {msg.role === 'user' ? 'You' : 'AI Assistant'}
+                  chatMessages.filter(msg => !msg.hidden).map((msg, idx) => (
+                    <div key={idx} className={`p-3.5 rounded-lg shadow-sm transition-all ${msg.role === 'user' ? 'bg-[#2A2A2A] border border-[#404040] ml-6' : 'bg-[#18181A] border border-[#c678dd]/30 mr-6'}`}>
+                      <h4 className={`text-[10px] uppercase tracking-wider mb-2 font-bold ${msg.role === 'user' ? 'text-[#888888]' : 'text-[#c678dd]'}`}>
+                        {msg.role === 'user' ? 'You' : ''}
                       </h4>
-                      <div className="text-[#E0E0E0] leading-relaxed whitespace-pre-wrap break-words font-sans">
-                        {msg.content}
+                      <div className="text-[#E0E0E0] leading-relaxed break-words font-sans text-[13px]">
+                        <ReactMarkdown
+                          components={{
+                            h1: ({node, ...props}) => <h1 className="text-base font-bold my-2 text-white" {...props} />,
+                            h2: ({node, ...props}) => <h2 className="text-[14px] font-bold mt-4 mb-2 text-[#4DAAFB]" {...props} />,
+                            h3: ({node, ...props}) => <h3 className="text-[13px] font-bold mt-3 mb-1 text-[#c678dd]" {...props} />,
+                            p: ({node, ...props}) => <p className="mb-2 last:mb-0 text-[#cccccc]" {...props} />,
+                            ul: ({node, ...props}) => <ul className="list-disc pl-4 mb-3 space-y-1" {...props} />,
+                            ol: ({node, ...props}) => <ol className="list-decimal pl-4 mb-3 space-y-1" {...props} />,
+                            li: ({node, ...props}) => <li className="mb-0 text-[#cccccc]" {...props} />,
+                            a: ({node, ...props}) => <a className="text-[#599e5e] hover:text-[#7CB165] hover:underline font-medium" target="_blank" rel="noopener noreferrer" {...props} />,
+                            strong: ({node, ...props}) => <strong className="font-semibold text-[#eeeeee]" {...props} />,
+                            code: ({node, inline, ...props}: any) => 
+                              inline 
+                                ? <code className="bg-[#000] text-[#4DAAFB] px-1 py-0.5 rounded text-[11.5px] font-mono border border-[#333]" {...props} /> 
+                                : <pre className="bg-[#000] p-2.5 rounded-md text-[11.5px] font-mono border border-[#333] overflow-x-auto shadow-inner mb-3 mt-1 text-[#D4D4D4]"><code {...props} /></pre>
+                          }}
+                        >
+                          {msg.content}
+                        </ReactMarkdown>
                       </div>
                     </div>
                   ))

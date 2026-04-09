@@ -39,3 +39,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Python / ML Server
+__pycache__/
+*.pth
+*.pt
+ml-server/weights/
+.ipynb_checkpoints/
+*.ipynb
