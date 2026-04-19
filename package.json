@@ -1,0 +1,57 @@
+{
+  "name": "tmpapp",
+  "version": "0.1.0",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "desktop:copy": "node scripts/copy-standalone-assets.js",
+    "desktop:dev": "electron .",
+    "desktop:build": "npm run build && npm run desktop:copy && electron-builder build --win"
+  },
+  "build": {
+    "appId": "com.javaide.app",
+    "productName": "JavaIDE AI",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      ".next/standalone/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    }
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@tailwindcss/typography": "^0.5.19",
+    "lucide-react": "^0.577.0",
+    "markdown-to-jsx": "^9.7.15",
+    "next": "16.1.7",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^4.9.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "electron": "^41.2.1",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.7",
+    "fs-extra": "^11.3.4",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "wait-on": "^9.0.5"
+  }
+}
