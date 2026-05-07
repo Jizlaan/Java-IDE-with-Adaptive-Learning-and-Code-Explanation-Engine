@@ -1,19 +1,15 @@
 """
-server.py — Code Smell Detection API (matches ModelNew.ipynb exactly)
-Place this file in the same folder as your weights/ directory.
+server.py — Code Smell Detection API
+Architectures verified directly from .pth weight shapes.
 
 Folder structure required:
   server.py
   weights/
     FNN_Feature_Envy_best.pth
-    FNN_Feature_Envy_zen_best.pth
     FNN_God_Class_best.pth
-    FNN_God_Class_zen_best.pth
     FNN_Long_Method_best.pth
     RNN_Feature_Envy_best.pth
-    RNN_Feature_Envy_zen_best.pth
     RNN_God_Class_best.pth
-    RNN_God_Class_zen_best.pth
     RNN_Long_Method_best.pth
 
 Run with: uvicorn server:app --port 5000
@@ -27,7 +23,7 @@ import torch.nn as nn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sklearn.preprocessing import RobustScaler
+import joblib
 
 app = FastAPI()
 
@@ -38,37 +34,78 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ── Constants — must match ModelNew.ipynb exactly ────────────────────────────
+# ── Constants ────────────────────────────────────────────────────────────────
 WEIGHTS_DIR = "weights"
-SEQ_LEN     = 4       # RNN uses 4 time-steps (changed from old notebook)
-N_FEATURES  = 18      # number of extracted code features
+SEQ_LEN     = 4
 DEVICE      = torch.device("cpu")
 
-# All smell keys (matches both dataset sources)
-CODE_SMELLS = [
-    "Feature_Envy",
-    "Feature_Envy_zen",
-    "God_Class",
-    "God_Class_zen",
-    "Long_Method",
-]
+CODE_SMELLS = ["Feature_Envy", "God_Class", "Long_Method"]
 
-# Model configs — copied directly from ModelNew.ipynb Cell 7
-FNN_CFG = {
-    "hidden_dims": [128, 64, 32],
-    "dropout":      0.3,
-}
-RNN_CFG = {
-    "hidden_dim": 64,
-    "layers":     2,
-    "dropout":    0.3,
+# Per-smell feature counts — read directly from FNN weight shapes (net.0.weight dim 1)
+FNN_INPUT_DIMS = {
+    "Feature_Envy": 83,
+    "God_Class":    62,
+    "Long_Method":  65,
 }
 
+# Per-smell RNN input_dim — read from lstm.weight_ih_l0 dim 1
+# (= ceil(n_features / SEQ_LEN) after zero-padding)
+RNN_INPUT_DIMS = {
+    "Feature_Envy": 21,   # 84 / 4  (83 features padded to 84)
+    "God_Class":    16,   # 64 / 4  (62 features padded to 64)
+    "Long_Method":  17,   # 68 / 4  (65 features padded to 68)
+}
 
-# ── Model definitions — copied from ModelNew.ipynb Cell 5 ───────────────────
-class FeedForwardNet(nn.Module):
-    def __init__(self, input_dim, hidden_dims, dropout=0.4):
+# Shared RNN hyper-params — verified from weight shapes:
+#   hidden_dim=128  (weight_hh_l* dim 1)
+#   num_layers=3    (l0, l1, l2 present)
+#   bidirectional   (weight_ih_l0_reverse present)
+RNN_CFG = {"hidden_dim": 128, "layers": 3, "dropout": 0.4}
+
+FNN_CFG = {"hidden_dims": [256, 128, 64, 32], "dropout": 0.4}
+
+
+# ── Model definitions (match training notebook exactly) ──────────────────────
+
+class AttentionLayer(nn.Module):
+    """Additive attention over BiLSTM time-steps."""
+    def __init__(self, hidden_dim: int):
         super().__init__()
+        self.attention = nn.Linear(hidden_dim * 2, 1)   # (1, 256)
+
+    def forward(self, lstm_out: torch.Tensor) -> torch.Tensor:
+        # lstm_out: (batch, seq_len, hidden_dim*2)
+        scores  = self.attention(lstm_out).squeeze(-1)   # (batch, seq_len)
+        weights = torch.softmax(scores, dim=1)           # (batch, seq_len)
+        return (lstm_out * weights.unsqueeze(-1)).sum(dim=1)  # (batch, hidden_dim*2)
+
+
+class RecurrentNet(nn.Module):
+    """3-layer BiLSTM + Attention + BN — verified against .pth shapes."""
+    def __init__(self, input_dim: int, hidden_dim: int = 128,
+                 num_layers: int = 3, dropout: float = 0.4):
+        super().__init__()
+        self.lstm      = nn.LSTM(input_dim, hidden_dim, num_layers,
+                                 batch_first=True,
+                                 dropout=dropout if num_layers > 1 else 0,
+                                 bidirectional=True)
+        self.attention = AttentionLayer(hidden_dim)
+        self.bn        = nn.BatchNorm1d(hidden_dim * 2)
+        self.drop      = nn.Dropout(dropout)
+        self.fc        = nn.Linear(hidden_dim * 2, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        out, _ = self.lstm(x)
+        ctx    = self.attention(out)                      # attention pool all steps
+        return self.fc(self.drop(self.bn(ctx))).squeeze(-1)
+
+
+class FeedForwardNet(nn.Module):
+    """256→128→64→32 FNN with BatchNorm — verified against .pth shapes."""
+    def __init__(self, input_dim: int, hidden_dims=None, dropout: float = 0.4):
+        super().__init__()
+        if hidden_dims is None:
+            hidden_dims = [256, 128, 64, 32]
         layers, prev = [], input_dim
         for h in hidden_dims:
             layers += [nn.Linear(prev, h), nn.BatchNorm1d(h),
@@ -77,62 +114,50 @@ class FeedForwardNet(nn.Module):
         layers.append(nn.Linear(prev, 1))
         self.net = nn.Sequential(*layers)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.net(x).squeeze(-1)
 
 
-class RecurrentNet(nn.Module):
-    def __init__(self, input_dim, hidden_dim, num_layers=2, dropout=0.3):
-        super().__init__()
-        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers,
-                            batch_first=True,
-                            dropout=dropout if num_layers > 1 else 0,
-                            bidirectional=True)
-        self.bn   = nn.BatchNorm1d(hidden_dim * 2)
-        self.drop = nn.Dropout(dropout)
-        self.fc   = nn.Linear(hidden_dim * 2, 1)
-
-    def forward(self, x):
-        out, _ = self.lstm(x)
-        return self.fc(self.drop(self.bn(out[:, -1, :]))).squeeze(-1)
-
-
-# ── Load weights at startup ──────────────────────────────────────────────────
-fnn_models = {}
-rnn_models = {}
+# ── Load all weights at startup ──────────────────────────────────────────────
+fnn_models: dict = {}
+rnn_models: dict = {}
+fnn_scalers: dict = {}
+rnn_scalers: dict = {}
 
 for smell in CODE_SMELLS:
     fnn_path = os.path.join(WEIGHTS_DIR, f"FNN_{smell}_best.pth")
     rnn_path = os.path.join(WEIGHTS_DIR, f"RNN_{smell}_best.pth")
+    fnn_scaler_path = os.path.join(WEIGHTS_DIR, f"scaler_FNN_{smell}.joblib")
+    rnn_scaler_path = os.path.join(WEIGHTS_DIR, f"scaler_RNN_{smell}.joblib")
 
-    # FNN — input dim is always N_FEATURES (18)
-    if os.path.exists(fnn_path):
-        m = FeedForwardNet(N_FEATURES, FNN_CFG["hidden_dims"], FNN_CFG["dropout"])
-        m.load_state_dict(torch.load(fnn_path, map_location=DEVICE))
+    # FNN
+    if os.path.exists(fnn_path) and os.path.exists(fnn_scaler_path):
+        m = FeedForwardNet(FNN_INPUT_DIMS[smell], FNN_CFG["hidden_dims"], FNN_CFG["dropout"])
+        m.load_state_dict(torch.load(fnn_path, map_location=DEVICE, weights_only=True))
         m.eval()
         fnn_models[smell] = m
-        print(f"  ✓ FNN loaded: {smell}")
+        fnn_scalers[smell] = joblib.load(fnn_scaler_path)
+        print(f"  [+] FNN & Scaler loaded: {smell}")
     else:
-        print(f"  ✗ FNN missing: {fnn_path}")
+        print(f"  [-] FNN or Scaler missing: {smell}")
 
-    # RNN — input dim is features_per_step after padding to SEQ_LEN
-    if os.path.exists(rnn_path):
-        pad = (SEQ_LEN - N_FEATURES % SEQ_LEN) % SEQ_LEN
-        fps = (N_FEATURES + pad) // SEQ_LEN
-        m = RecurrentNet(fps, RNN_CFG["hidden_dim"],
-                         RNN_CFG["layers"], RNN_CFG["dropout"])
-        m.load_state_dict(torch.load(rnn_path, map_location=DEVICE))
+    # RNN
+    if os.path.exists(rnn_path) and os.path.exists(rnn_scaler_path):
+        fps = RNN_INPUT_DIMS[smell]
+        m = RecurrentNet(fps, RNN_CFG["hidden_dim"], RNN_CFG["layers"], RNN_CFG["dropout"])
+        m.load_state_dict(torch.load(rnn_path, map_location=DEVICE, weights_only=True))
         m.eval()
         rnn_models[smell] = m
-        print(f"  ✓ RNN loaded: {smell}")
+        rnn_scalers[smell] = joblib.load(rnn_scaler_path)
+        print(f"  [+] RNN & Scaler loaded: {smell}")
     else:
-        print(f"  ✗ RNN missing: {rnn_path}")
+        print(f"  [-] RNN or Scaler missing: {smell}")
 
 print(f"\nFNN models loaded: {list(fnn_models.keys())}")
 print(f"RNN models loaded: {list(rnn_models.keys())}")
 
 
-# ── Feature extraction — copied from ModelNew.ipynb Cell 14 ─────────────────
+# ── Feature extraction ───────────────────────────────────────────────────────
 def extract_features(code: str) -> np.ndarray:
     lines    = code.split("\n")
     nonempty = [l for l in lines if l.strip()]
@@ -171,32 +196,39 @@ def extract_features(code: str) -> np.ndarray:
                     dtype=np.float32)
 
 
+def _pad_and_slice(features: np.ndarray, n_features: int) -> np.ndarray:
+    """Truncate or zero-pad a raw feature vector to exactly n_features."""
+    if len(features) >= n_features:
+        return features[:n_features]
+    return np.pad(features, (0, n_features - len(features)))
+
+
 def predict_smells(code: str, threshold: float = 0.5) -> dict:
     raw = extract_features(code)
-
-    # Scale features using RobustScaler (matches training)
-    scaler     = RobustScaler()
-    raw_scaled = scaler.fit_transform(raw.reshape(1, -1)).flatten()
-
     results = {}
 
     for smell in CODE_SMELLS:
         scores = []
 
         with torch.no_grad():
-            # FNN
-            if smell in fnn_models:
-                feat = raw_scaled[:N_FEATURES].astype(np.float32)
-                x    = torch.tensor(feat).unsqueeze(0)
+            # ── FNN ──────────────────────────────────────────────────────────
+            if smell in fnn_models and smell in fnn_scalers:
+                n   = FNN_INPUT_DIMS[smell]
+                feat = _pad_and_slice(raw, n)
+                feat_scaled = fnn_scalers[smell].transform(feat.reshape(1, -1)).flatten()
+                
+                x    = torch.tensor(feat_scaled).float().unsqueeze(0)
                 prob = torch.sigmoid(fnn_models[smell](x)).item()
                 scores.append(prob)
 
-            # RNN
-            if smell in rnn_models:
-                pad  = (SEQ_LEN - N_FEATURES % SEQ_LEN) % SEQ_LEN
-                feat = np.pad(raw_scaled, (0, pad)).astype(np.float32)
-                fps  = len(feat) // SEQ_LEN
-                x    = torch.tensor(feat).view(1, SEQ_LEN, fps)
+            # ── RNN ──────────────────────────────────────────────────────────
+            if smell in rnn_models and smell in rnn_scalers:
+                fps  = RNN_INPUT_DIMS[smell]
+                n    = fps * SEQ_LEN
+                feat = _pad_and_slice(raw, n)
+                feat_scaled = rnn_scalers[smell].transform(feat.reshape(1, -1)).flatten()
+                
+                x    = torch.tensor(feat_scaled).float().view(1, SEQ_LEN, fps)
                 prob = torch.sigmoid(rnn_models[smell](x)).item()
                 scores.append(prob)
 
@@ -217,27 +249,17 @@ SMELL_INFO = {
         "explanation": "This method uses data or methods from another class more than its own. It likely belongs in that other class.",
         "concepts":    ["Encapsulation", "Object-Oriented Design", "Move Method"],
         "resources":   [
-            {"title": "Move Method",   "url": "https://refactoring.guru/move-method"},
-            {"title": "Feature Envy",  "url": "https://refactoring.guru/smells/feature-envy"},
+            {"title": "Move Method",  "url": "https://refactoring.guru/move-method"},
+            {"title": "Feature Envy", "url": "https://refactoring.guru/smells/feature-envy"},
         ],
-    },
-    "Feature_Envy_zen": {
-        "explanation": "Your method shows signs of feature envy — it is more interested in another class's data than its own responsibilities.",
-        "concepts":    ["Encapsulation", "Object-Oriented Design"],
-        "resources":   [{"title": "Move Method", "url": "https://refactoring.guru/move-method"}],
     },
     "God_Class": {
         "explanation": "This class is doing too much. A God Class knows too much and does too much — split it into smaller, focused classes.",
         "concepts":    ["Single Responsibility Principle", "Class Decomposition"],
         "resources":   [
-            {"title": "Extract Class",      "url": "https://refactoring.guru/extract-class"},
-            {"title": "God Class Pattern",  "url": "https://refactoring.guru/smells/large-class"},
+            {"title": "Extract Class",     "url": "https://refactoring.guru/extract-class"},
+            {"title": "God Class Pattern", "url": "https://refactoring.guru/smells/large-class"},
         ],
-    },
-    "God_Class_zen": {
-        "explanation": "Your class has grown too large and is handling too many responsibilities. Consider breaking it apart.",
-        "concepts":    ["Single Responsibility Principle", "Class Decomposition"],
-        "resources":   [{"title": "Extract Class", "url": "https://refactoring.guru/extract-class"}],
     },
     "Long_Method": {
         "explanation": "This method is too long. Long methods are hard to read, test, and maintain. Break it into smaller helper methods.",
@@ -267,7 +289,7 @@ def build_response(smell_results: dict) -> dict:
         info  = SMELL_INFO.get(smell, {})
         prob  = smell_results[smell]["probability"]
         conf  = smell_results[smell]["confidence"]
-        label = smell.replace("_zen", " (Zenodo)").replace("_", " ")
+        label = smell.replace("_", " ")
         explanations.append(
             f"{label} ({prob:.0%}, {conf} confidence): {info.get('explanation', '')}"
         )
@@ -292,8 +314,11 @@ class CodeErrorRequest(BaseModel):
 
 @app.post("/predict")
 def predict(request: CodeErrorRequest):
-    smell_results = predict_smells(request.code)
-    return build_response(smell_results)
+    try:
+        smell_results = predict_smells(request.code)
+        return build_response(smell_results)
+    except Exception as e:
+        return {"error": "Feature extraction failed. Ensure the code is valid Java/C# syntax."}
 
 
 @app.get("/health")
